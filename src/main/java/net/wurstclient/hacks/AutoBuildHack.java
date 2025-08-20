@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.player.PlayerInventory;
@@ -80,6 +81,10 @@ public final class AutoBuildHack extends Hack
 	private AutoBuildTemplate template;
 	private LinkedHashMap<BlockPos, Item> remainingBlocks =
 		new LinkedHashMap<>();
+	
+	// Yeni eklendi:
+	private long lastPlaceTime = 0;
+	private final Random random = new Random();
 	
 	public AutoBuildHack()
 	{
@@ -217,35 +222,43 @@ public final class AutoBuildHack extends Hack
 		RenderUtils.drawSolidBoxes(matrixStack, greenBoxes, green, true);
 	}
 	
+	// Burada buildNormally fonksiyonunu tamamen değiştiriyoruz:
 	private void buildNormally()
 	{
 		remainingBlocks.keySet()
 			.removeIf(pos -> !BlockUtils.getState(pos).isReplaceable());
 		
-		if(remainingBlocks.isEmpty())
+		if (remainingBlocks.isEmpty())
 		{
 			status = Status.IDLE;
 			return;
 		}
 		
-		if(!fastPlace.isChecked() && MC.itemUseCooldown > 0)
+		if (!fastPlace.isChecked() && MC.itemUseCooldown > 0)
+			return;
+		
+		long currentTime = System.currentTimeMillis();
+		int randomDelay = 50 + random.nextInt(100); // 50-150 ms arası rastgele gecikme
+		
+		if (currentTime - lastPlaceTime < randomDelay)
 			return;
 		
 		double rangeSq = range.getValueSq();
-		for(Map.Entry<BlockPos, Item> entry : remainingBlocks.entrySet())
+		
+		for (Map.Entry<BlockPos, Item> entry : remainingBlocks.entrySet())
 		{
 			BlockPos pos = entry.getKey();
 			Item item = entry.getValue();
 			
 			BlockPlacingParams params = BlockPlacer.getBlockPlacingParams(pos);
-			if(params == null || params.distanceSq() > rangeSq
-				|| checkLOS.isChecked() && !params.lineOfSight())
-				if(strictBuildOrder.isChecked())
+			if (params == null || params.distanceSq() > rangeSq
+				|| (checkLOS.isChecked() && !params.lineOfSight()))
+				if (strictBuildOrder.isChecked())
 					return;
 				else
 					continue;
-				
-			if(useSavedBlocks.isChecked() && item != Items.AIR
+			
+			if (useSavedBlocks.isChecked() && item != Items.AIR
 				&& !MC.player.getMainHandStack().isOf(item))
 			{
 				giveOrSelectItem(item);
@@ -256,7 +269,10 @@ public final class AutoBuildHack extends Hack
 			RotationUtils.getNeededRotations(params.hitVec())
 				.sendPlayerLookPacket();
 			InteractionSimulator.rightClickBlock(params.toHitResult());
-			return;
+			
+			lastPlaceTime = System.currentTimeMillis(); // zaman güncelle
+			
+			return; // sadece bir blok koyup çık
 		}
 	}
 	
@@ -287,30 +303,4 @@ public final class AutoBuildHack extends Hack
 			template = AutoBuildTemplate.load(path);
 			status = Status.IDLE;
 			
-		}catch(IOException | JsonException e)
-		{
-			Path fileName = path.getFileName();
-			ChatUtils.error("Couldn't load template '" + fileName + "'.");
-			
-			String simpleClassName = e.getClass().getSimpleName();
-			String message = e.getMessage();
-			ChatUtils.message(simpleClassName + ": " + message);
-			
-			e.printStackTrace();
-			setEnabled(false);
-		}
-	}
-	
-	public Path getFolder()
-	{
-		return templateSetting.getFolder();
-	}
-	
-	private enum Status
-	{
-		NO_TEMPLATE,
-		LOADING,
-		IDLE,
-		BUILDING;
-	}
-}
+		}catch(IOException | JsonException e
